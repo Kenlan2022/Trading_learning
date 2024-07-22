@@ -41,9 +41,9 @@ export class TaifexScraperService {
     };
   }
 
-  async fetchInstInvestorsTxoTrades(options?:{date: string}){
+  async fetchInstInvestorsTxoTrades(options?: { date: string }) {
     const date = options?.date ?? DateTime.local().toISODate();
-    const queryDate = DateTime.fromISO(date).toFormat('yyyy/MM/dd');
+    const queryDate = DateTime.fromISO(date).toFormat("yyyy/MM/dd");
     const firstDate = DateTime.fromISO(date).minus({ years: 3 }).toFormat("yyyy/MM/dd HH:mm");
     const lastDate = DateTime.fromISO(date).toFormat("yyyy/MM/dd HH:mm");
 
@@ -53,16 +53,16 @@ export class TaifexScraperService {
       commodityId: "TXO",
       firstDate: firstDate,
       lastDate: lastDate
-    })
+    });
 
-    const url = 'https://www.taifex.com.tw/cht/3/callsAndPutsDateDown';
+    const url = "https://www.taifex.com.tw/cht/3/callsAndPutsDateDown";
 
     const response = await firstValueFrom(this.httpService.post(url, form, {
-      responseType: 'arraybuffer'
+      responseType: "arraybuffer"
     }));
-    const json = await csvtojson({noheader: true, output: 'csv'}).fromString(iconv.decode(response.data, 'big5'));
+    const json = await csvtojson({ noheader: true, output: "csv" }).fromString(iconv.decode(response.data, "big5"));
     const [fields, dealersCalls, sitcCalls, finiCalls, dealerPuts, sitcPuts, finiPuts] = json;
-    if(fields[0] !== '日期') return null;
+    if (fields[0] !== "日期") return null;
     return {
       date,
       finiTxoCallsNetOi: numeral(finiCalls[14]).value(),
@@ -77,33 +77,62 @@ export class TaifexScraperService {
       sitcTxoPutsNeOiValue: numeral(sitcPuts[15]).value(),
       dealersTxoPutsNetOi: numeral(dealerPuts[14]).value(),
       dealersTxoPutsNetOiValue: numeral(dealerPuts[15]).value()
-    }
+    };
   }
 
-  private async fetchMxfMarketOi(options?: {date: string}){
+  private async fetchMxfMarketOi(options?: { date: string }) {
+    const date = options?.date ?? DateTime.local().toISODate();
+    const queryDate = DateTime.fromISO(date).toFormat("yyyy/MM/dd");
+    const form = new URLSearchParams({
+      down_type: "1",
+      queryStartDate: queryDate,
+      queryEndDate: queryDate,
+      commodity_id: "MTX"
+    });
+    const url = "https://www.taifex.com.tw/cht/3/futDataDown";
+
+    const response = await firstValueFrom(this.httpService.post(url, form, {
+      responseType: "arraybuffer"
+    }));
+
+    const json = await csvtojson({ noheader: true, output: "csv" }).fromString(
+      iconv.decode(response.data, "big5"));
+    const [fields, ...rows] = json;
+    if (fields[0] !== "交易日期") return null;
+
+    const mxfMarketOi = rows
+      .filter(row => row[17] === "一般" && row[18])
+      .reduce((oi, row) => oi + numeral(row[11]).value(), 0);
+
+    return { date, mxfMarketOi };
+  }
+
+  private async fetchInstInvestorsMxfOi(options?: { date: string }) {
     const date = options?.date ?? DateTime.local().toISODate();
     const queryDate = DateTime.fromISO(date).toFormat('yyyy/MM/dd');
     const form = new URLSearchParams({
-      down_type: '1',
       queryStartDate: queryDate,
       queryEndDate: queryDate,
-      commodity_id: 'MTX',
+      commodityId: "MXF"
     })
-    const url = 'https://www.taifex.com.tw/cht/3/futDataDown';
+
+    const url = 'https://www.taifex.com.tw/cht/3/futContrastsDateDown';
 
     const response = await firstValueFrom(this.httpService.post(url, form, {
       responseType: 'arraybuffer'
     }));
+    const json = await csvtojson({ noheader: true, output: 'csv' }).fromString(iconv.decode(response.data, 'big5'));
+    const [fields, dealers, sitc, fini] = json;
+    if (fields[0] !== '日期') return null;
 
-    const json = await csvtojson({noheader: true, output: 'csv'}).fromString(
-      iconv.decode(response.data, 'big5'));
-    const [fields, ...rows] = json;
-    if(fields[0] !== '交易日期') return null;
-
-    const mxfMarketOi = rows
-      .filter(row => row[17] === '一般' && row[18])
-      .reduce((oi, row) => oi + numeral(row[11]).value(), 0);
-
-    return {date, mxfMarketOi}
+    const dealersLongOi = numeral(dealers[9]).value();
+    const dealersShortOi = numeral(dealers[11]).value();
+    const sitcLongOi = numeral(dealers[9]).value();
+    const sitcShortOi = numeral(dealers[11]).value();
+    const finiLongOi = numeral(dealers[9]).value();
+    const finiShortOi = numeral(dealers[11]).value();
+    const investorsMxfLongOi = dealersLongOi + sitcLongOi + finiLongOi;
+    const investorsMxfShortOi = dealersShortOi + sitcShortOi + finiShortOi;
+    return { date, investorsMxfLongOi, investorsMxfShortOi };
   }
 }
