@@ -131,8 +131,86 @@ export class TaifexScraperService {
     const sitcShortOi = numeral(dealers[11]).value();
     const finiLongOi = numeral(dealers[9]).value();
     const finiShortOi = numeral(dealers[11]).value();
-    const investorsMxfLongOi = dealersLongOi + sitcLongOi + finiLongOi;
-    const investorsMxfShortOi = dealersShortOi + sitcShortOi + finiShortOi;
-    return { date, investorsMxfLongOi, investorsMxfShortOi };
+    const instInvestorsMxfLongOi = dealersLongOi + sitcLongOi + finiLongOi;
+    const instInvestorsMxfShortOi = dealersShortOi + sitcShortOi + finiShortOi;
+    return { date, instInvestorsMxfLongOi, instInvestorsMxfShortOi };
+  }
+
+  async fetchRetailMxPosistion(options?: { date: string }) {
+    const date = options?.date ?? DateTime.local().toISODate();
+    const [fetchedMxfMarketOi, fetchedInstInvestorsMxfOi] = await Promise.all([
+      this.fetchMxfMarketOi(options),
+      this.fetchInstInvestorsMxfOi(options)
+    ]);
+
+    if (!fetchedMxfMarketOi || !fetchedInstInvestorsMxfOi) return null;
+
+    const { mxfMarketOi } = fetchedMxfMarketOi;
+    const { instInvestorsMxfLongOi, instInvestorsMxfShortOi } = fetchedInstInvestorsMxfOi;
+    const retailMxfLongOi = mxfMarketOi - instInvestorsMxfLongOi;
+    const retailMxfShortOi = mxfMarketOi - instInvestorsMxfShortOi;
+    const retailMxfNetOi = retailMxfLongOi - retailMxfShortOi;
+
+    const retailMxfLongShortRatio = Math.round(retailMxfNetOi / mxfMarketOi * 10000) / 10000;
+    return {
+      date,
+      retailMxfLongOi,
+      retailMxfShortOi,
+      retailMxfNetOi,
+      retailMxfLongShortRatio
+    };
+  }
+
+  async fetchLargeTradersTxPosition(options?: { date: string }) {
+    const date = options?.date ?? DateTime.local().toISODate();
+    DateTime.fromISO(date).toFormat("yyyy/MM/dd");
+    const form = new URLSearchParams({
+      queryStartDate: DateTime.fromISO(date).toFormat("yyyy/MM/dd"),
+      queryEndDate: DateTime.fromISO(date).toFormat("yyyy/MM/dd"),
+      //commodityId: "TXF"
+    });
+
+    const url = "https://www.taifex.com.tw/cht/3/largeTraderFutDown";
+    const response = await firstValueFrom(this.httpService.post(url, form, {
+      responseType: "arraybuffer"
+    }));
+
+    const json = await csvtojson({ noheader: true, output: "csv" }).fromString(iconv.decode(response.data, "big5"));
+    const [fields, ...rows] = json;
+    if (fields[0] !== "日期") return null;
+    const twRows = rows.filter(row => row[1] === "TXF");
+    
+    const topTenFrontMonthTxfLongOi = numeral(twRows[2][7]).value();
+    const topTenFrontMonthTxfShortOi = numeral(twRows[2][8]).value();
+    const topTenFrontMonthTxfNetOi = topTenFrontMonthTxfLongOi - topTenFrontMonthTxfShortOi;
+    
+    const topTenSpecificFrontMonthTxfLongOi = numeral(twRows[3][7]).value();
+    const topTenSpecificFrontMonthTxfShortOi = numeral(twRows[3][8]).value();
+    const topTenSpecificFrontMonthNetOi = topTenSpecificFrontMonthTxfLongOi - topTenSpecificFrontMonthTxfShortOi;
+    const topTenNonspecificFrontMonthTxfNetOi = topTenFrontMonthTxfNetOi - topTenSpecificFrontMonthNetOi
+
+    const topTenAllMonthsTxfLongOi = numeral(twRows[4][7]).value();
+    const topTenAllMonthsTxfShortOi = numeral(twRows[4][8]).value();
+    const topTenAllMonthsTxfNetOi = topTenAllMonthsTxfLongOi - topTenAllMonthsTxfShortOi;
+
+
+    const topTenSpecificAllMonthsTxfLongOi = numeral(twRows[5][7]).value();
+    const topTenSpecificAllMonthsTxfShortOi = numeral(twRows[5][8]).value();
+    const topTenSpecificAllMonthsTxfNetOi = topTenSpecificAllMonthsTxfLongOi - topTenSpecificAllMonthsTxfShortOi;
+
+    const topTenNonspecificAllMonthsTxfNetOi = topTenAllMonthsTxfNetOi - topTenSpecificAllMonthsTxfNetOi;
+    const topTenSpecificBackMonthsTxfNetOi = topTenSpecificAllMonthsTxfNetOi - topTenSpecificFrontMonthNetOi;
+    const topTenNonspecificBackMonthsTxfNetOi = topTenNonspecificAllMonthsTxfNetOi - topTenNonspecificFrontMonthTxfNetOi
+
+    const allMonthsTxfMarketOi = numeral(twRows[4][9]).value();
+
+    return {
+      date,
+      topTenSpecificFrontMonthNetOi,
+      topTenSpecificBackMonthsTxfNetOi,
+      topTenNonspecificFrontMonthTxfNetOi,
+      topTenNonspecificBackMonthsTxfNetOi,
+      allMonthsTxfMarketOi
+    };
   }
 }
